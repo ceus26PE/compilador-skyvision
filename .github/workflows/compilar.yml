@@ -1,0 +1,88 @@
+name: Compilar SkyVision T400 NoAVX
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Instalar CUDA Toolkit 12.4
+        uses: Jimver/cuda-toolkit@v0.2.19
+        with:
+          cuda-version: '12.4.1'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+
+      - name: Configurar compilador MSVC C++
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Instalar Ninja
+        uses: seanmcbreen/setup-ninja@v1
+
+      - name: Clonar código fuente en la nube
+        run: |
+          git clone --depth 1 https://github.com/SkYContact/SkyVision.cpp.git skyvision
+          cd skyvision
+          git clone --depth 1 https://github.com/ggml-org/ggml.git ggml
+
+      - name: Configurar CMake (Athlon II X3 + Turing T400)
+        working-directory: skyvision
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_CUDA=ON `
+            -DCMAKE_CUDA_ARCHITECTURES=75 `
+            -DGGML_NATIVE=OFF `
+            -DGGML_AVX=OFF `
+            -DGGML_AVX2=OFF `
+            -DGGML_AVX512=OFF `
+            -DGGML_FMA=OFF `
+            -DGGML_F16C=OFF
+
+      - name: Compilar vqa-cli
+        working-directory: skyvision
+        run: |
+          cmake --build build --config Release --target vqa-cli --parallel 4
+
+      - name: Empaquetar de forma inteligente y dinámica
+        working-directory: skyvision
+        shell: powershell
+        run: |
+          # 1. Crear carpeta limpia para la entrega final
+          New-Item -ItemType Directory -Force -Path dist
+
+          # 2. Localizar vqa-cli.exe sin importar en qué subcarpeta lo haya generado CMake
+          $exeFile = Get-ChildItem -Path build -Filter "vqa-cli.exe" -Recurse | Select-Object -First 1
+          if ($exeFile) {
+              Write-Host "Ejecutable encontrado en: $($exeFile.FullName)"
+              Copy-Item $exeFile.FullName -Destination dist/
+          } else {
+              Write-Error "ERROR CRÍTICO: vqa-cli.exe no se generó durante la compilación."
+              exit 1
+          }
+
+          # 3. Copiar TODAS las librerías dinámicas (.dll) que el compilador haya creado
+          Get-ChildItem -Path build -Filter "*.dll" -Recurse | ForEach-Object {
+              Write-Host "Copiando DLL compilada: $($_.Name)"
+              Copy-Item $_.FullName -Destination dist/ -Force
+          }
+
+          # 4. Incluir los runtimes necesarios de CUDA 12.4 para que sea portátil en tu PC
+          if (Test-Path "$env:CUDA_PATH\bin") {
+              $cudaDlls = @("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
+              foreach ($dll in $cudaDlls) {
+                  $dllPath = Join-Path "$env:CUDA_PATH\bin" $dll
+                  if (Test-Path $dllPath) {
+                      Write-Host "Adjuntando runtime CUDA: $dll"
+                      Copy-Item $dllPath -Destination dist/ -Force
+                  }
+              }
+          }
+
+      - name: Generar archivo descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkyVision-T400-NoAVX-Win10
+          path: skyvision/dist/*
