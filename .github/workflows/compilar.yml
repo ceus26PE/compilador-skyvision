@@ -18,10 +18,10 @@ jobs:
       - name: Configurar compilador MSVC C++
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Instalar Ninja
-        uses: seanmcbreen/setup-ninja@v1
+      - name: Instalar Ninja de forma nativa
+        run: choco install ninja
 
-      - name: Clonar código fuente en la nube
+      - name: Clonar repositorios de código
         run: |
           git clone --depth 1 https://github.com/SkYContact/SkyVision.cpp.git skyvision
           cd skyvision
@@ -46,42 +46,39 @@ jobs:
         run: |
           cmake --build build --config Release --target vqa-cli --parallel 4
 
-      - name: Empaquetar de forma inteligente y dinámica
+      - name: Empaquetar binarios y librerías CUDA
         working-directory: skyvision
         shell: powershell
         run: |
-          # 1. Crear carpeta limpia para la entrega final
           New-Item -ItemType Directory -Force -Path dist
 
-          # 2. Localizar vqa-cli.exe sin importar en qué subcarpeta lo haya generado CMake
+          # 1. Localizar el ejecutable en cualquier subcarpeta
           $exeFile = Get-ChildItem -Path build -Filter "vqa-cli.exe" -Recurse | Select-Object -First 1
           if ($exeFile) {
               Write-Host "Ejecutable encontrado en: $($exeFile.FullName)"
               Copy-Item $exeFile.FullName -Destination dist/
           } else {
-              Write-Error "ERROR CRÍTICO: vqa-cli.exe no se generó durante la compilación."
+              Write-Error "ERROR: No se encontró vqa-cli.exe"
               exit 1
           }
 
-          # 3. Copiar TODAS las librerías dinámicas (.dll) que el compilador haya creado
+          # 2. Copiar todas las DLLs generadas por el compilador
           Get-ChildItem -Path build -Filter "*.dll" -Recurse | ForEach-Object {
-              Write-Host "Copiando DLL compilada: $($_.Name)"
               Copy-Item $_.FullName -Destination dist/ -Force
           }
 
-          # 4. Incluir los runtimes necesarios de CUDA 12.4 para que sea portátil en tu PC
+          # 3. Incluir las DLLs de CUDA 12.4 para que funcione en tu equipo
           if (Test-Path "$env:CUDA_PATH\bin") {
               $cudaDlls = @("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
               foreach ($dll in $cudaDlls) {
                   $dllPath = Join-Path "$env:CUDA_PATH\bin" $dll
                   if (Test-Path $dllPath) {
-                      Write-Host "Adjuntando runtime CUDA: $dll"
                       Copy-Item $dllPath -Destination dist/ -Force
                   }
               }
           }
 
-      - name: Generar archivo descargable
+      - name: Subir artefacto compilado
         uses: actions/upload-artifact@v4
         with:
           name: SkyVision-T400-NoAVX-Win10
