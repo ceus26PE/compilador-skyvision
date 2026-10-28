@@ -5,20 +5,21 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # Usamos windows-2022 por estabilidad comprobada con CUDA 12.4 y MSVC
+    runs-on: windows-2022
 
     steps:
-      - name: Instalar CUDA Toolkit 12.4
+      - name: Instalar CUDA Toolkit 12.4 completo
         uses: Jimver/cuda-toolkit@v0.2.19
         with:
           cuda-version: '12.4.1'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
       - name: Configurar compilador MSVC C++
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Instalar Ninja de forma nativa
+      - name: Instalar Ninja
         run: choco install ninja
 
       - name: Clonar repositorios de código
@@ -34,6 +35,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DGGML_CUDA=ON `
             -DCMAKE_CUDA_ARCHITECTURES=75 `
+            -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
             -DGGML_NATIVE=OFF `
             -DGGML_AVX=OFF `
             -DGGML_AVX2=OFF `
@@ -46,7 +48,7 @@ jobs:
         run: |
           cmake --build build --config Release --target vqa-cli --parallel 4
 
-      - name: Empaquetar binarios y librerías CUDA
+      - name: Empaquetar binarios y dependencias
         working-directory: skyvision
         shell: powershell
         run: |
@@ -58,16 +60,16 @@ jobs:
               Write-Host "Ejecutable encontrado en: $($exeFile.FullName)"
               Copy-Item $exeFile.FullName -Destination dist/
           } else {
-              Write-Error "ERROR: No se encontró vqa-cli.exe"
+              Write-Error "ERROR: No se generó vqa-cli.exe"
               exit 1
           }
 
-          # 2. Copiar todas las DLLs generadas por el compilador
+          # 2. Copiar librerías compiladas
           Get-ChildItem -Path build -Filter "*.dll" -Recurse | ForEach-Object {
               Copy-Item $_.FullName -Destination dist/ -Force
           }
 
-          # 3. Incluir las DLLs de CUDA 12.4 para que funcione en tu equipo
+          # 3. Incluir librerías de enlace de CUDA para ejecutar en tu PC
           if (Test-Path "$env:CUDA_PATH\bin") {
               $cudaDlls = @("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
               foreach ($dll in $cudaDlls) {
