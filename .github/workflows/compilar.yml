@@ -5,7 +5,6 @@ on:
 
 jobs:
   build:
-    # Usamos windows-2022 por estabilidad comprobada con CUDA 12.4 y MSVC
     runs-on: windows-2022
 
     steps:
@@ -28,11 +27,21 @@ jobs:
           cd skyvision
           git clone --depth 1 https://github.com/ggml-org/ggml.git ggml
 
+      - name: Parchear exportación de ggml_graph_next_uid para Windows MSVC
+        working-directory: skyvision
+        shell: powershell
+        run: |
+          # Exportar explícitamente ggml_graph_next_uid para resolver LNK2019
+          (Get-Content ggml/src/ggml-impl.h) -replace 'uint64_t ggml_graph_next_uid', 'GGML_API uint64_t ggml_graph_next_uid' | Set-Content ggml/src/ggml-impl.h
+          (Get-Content ggml/src/ggml.c) -replace 'uint64_t ggml_graph_next_uid', 'GGML_API uint64_t ggml_graph_next_uid' | Set-Content ggml/src/ggml.c
+          Write-Host "Parche de exportacion de GGML aplicado correctamente."
+
       - name: Configurar CMake (Athlon II X3 + Turing T400)
         working-directory: skyvision
         run: |
           cmake -S . -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_SHARED_LIBS=OFF `
             -DGGML_CUDA=ON `
             -DCMAKE_CUDA_ARCHITECTURES=75 `
             -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
@@ -64,12 +73,12 @@ jobs:
               exit 1
           }
 
-          # 2. Copiar librerías compiladas
+          # 2. Copiar cualquier librería compilada
           Get-ChildItem -Path build -Filter "*.dll" -Recurse | ForEach-Object {
               Copy-Item $_.FullName -Destination dist/ -Force
           }
 
-          # 3. Incluir librerías de enlace de CUDA para ejecutar en tu PC
+          # 3. Incluir las DLLs de CUDA 12.4
           if (Test-Path "$env:CUDA_PATH\bin") {
               $cudaDlls = @("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
               foreach ($dll in $cudaDlls) {
